@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "_comment_package": "-p never:electron-builder 預設 onTagOrDraft 會在 HEAD 在 tag 上時自動建 draft release 並上傳。發布必須是刻意的動作(gh release create)。",
-    "package": "electron-builder build -p never"
+    "package": "electron-builder build -p never",
+    "package:mac": "electron-builder build --mac -p never"
   },
   "dependencies": {
     "electron-overlay-window": "4.1.0",

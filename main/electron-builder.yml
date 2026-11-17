@@ -29,6 +29,8 @@ extraFiles:
     to: "LICENSES"
 extraMetadata:
   main: "main.js"
+# 只留 en-US / zh-TW / zh-CN 三個 Chromium 語系(省約 50 MB)。
+electronLanguages: ["en-US", "zh-TW", "zh-CN"]
 nsis:
   oneClick: false
   # 檔名固定(無空白):latest.yml 的 path/url 指向它,GitHub Release 的資產名必須一致

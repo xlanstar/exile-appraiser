@@ -36,6 +36,8 @@ import { stashSearch, typeInChat, type TextBoxDeps } from './text-box'
 import type { OverlayWindow } from './windowing/OverlayWindow'
 import type { GameWindow } from './windowing/GameWindow'
 import type { WidgetAreaTracker } from './windowing/WidgetAreaTracker'
+import { copyKeyPlan, HeldCopyKeys, modNameOfKeycode } from './held-copy-keys'
+import { uiohookGate } from './uiohook-gate'
 
 type UiohookKeyT = keyof typeof UiohookKey
 
@@ -57,6 +59,16 @@ export class Shortcuts {
   /** 診斷:最近一次任何熱鍵觸發的時間、是否已有一筆「按了沒觸發」在等 */
   private lastTriggerAt = 0
   private missPending = false
+  /**
+   * 2026-11-18 macOS:查價熱鍵送複製鍵時,使用者還按著的 hold 鍵不送放開(held-copy-keys.ts)。
+   * 其他平台 undefined(Windows 已按著的修飾鍵本來就不送)。
+   */
+  private readonly heldKeys = process.platform === 'darwin'
+    ? new HeldCopyKeys({
+      postUp: (key) => { uIOhook.keyToggle(UiohookKey[key as UiohookKeyT], 'up') },
+      gate: uiohookGate
+    })
+    : undefined
 
   constructor (
     private opts: {
@@ -86,6 +98,10 @@ export class Shortcuts {
     }
   ) {
     const { poeWindow } = opts
+    if (this.heldKeys) {
+      const held = this.heldKeys
+      uIOhook.on('keyup', (e) => { held.onKeyUp(modNameOfKeycode(e.keycode, UiohookKey)) })
+    }
     // 診斷(不改行為):全域掛鉤開著時(倉庫頁籤捲動:遊戲前景 + 按住 Ctrl;查價面板追蹤期間)看到查價熱鍵的主鍵被按下,
     // 但 300 ms 內全域熱鍵沒觸發 → 記一行當時的修飾鍵狀態。掛鉤沒開就收不到事件,不另外持有掛鉤。
     if (opts.mode === 'overlay') {
@@ -116,6 +132,14 @@ export class Shortcuts {
         })
       })
     }
+  }
+
+  /**
+   * macOS:補送查價熱鍵留著沒送的修飾鍵放開(held-copy-keys.ts)。其他地方要送按鍵前(正則貼上)、程式結束時呼叫;
+   * 其他平台 / 沒有留著的鍵 = 什麼都不做。
+   */
+  releaseHeldKeys (reason: string): void {
+    this.heldKeys?.flush(reason)
   }
 
   /** 聊天指令 / 倉庫搜尋的真實送鍵(uiohook keyTap)與剪貼簿;純邏輯與按鍵序列在 text-box.ts(測試注入假的) */
@@ -211,6 +235,13 @@ export class Shortcuts {
       this.opts.onScanToggleBoth?.()
       return
     }
+    if (entry.keepModKeys && entry.action.type === 'copy-item') {
+      // macOS:開始追蹤 hold 鍵的實體狀態(送複製鍵時還按著就不送放開)
+      this.heldKeys?.begin(entry.shortcut.split(' + ').filter(key => isModKey(key)))
+    } else {
+      // 要送其他按鍵:先把上一次查價留著沒送的修飾鍵放開補上(否則之後送的鍵會多帶 Ctrl)
+      this.heldKeys?.flush('送其他按鍵前')
+    }
     if (entry.keepModKeys) {
       const nonModKey = entry.shortcut.split(' + ').filter(key => !isModKey(key))[0]
       uIOhook.keyToggle(UiohookKey[nonModKey as UiohookKeyT], 'up')
@@ -263,6 +294,7 @@ export class Shortcuts {
     } catch (e) {
       // 準備失敗就放棄這次查價:剪貼簿可能還是舊物品(會被當成新複製),before 未知也無法還原
       console.warn('[shortcuts] 剪貼簿準備失敗,放棄這次查價', e)
+      this.heldKeys?.cancel()
       return
     }
     // 準備期間(讀 / 清空剪貼簿)使用者若放開 hold 鍵,keepModKeys 送出的會只剩單獨的複製鍵;延遲偏大時留下紀錄供實機判斷
@@ -271,10 +303,14 @@ export class Shortcuts {
 
     const combo = copyItemHotkey(this.game)
     console.log(`[shortcuts] 送出複製鍵 ${combo}(${this.game})`)
-    pressKeysToCopyItemText(
+    const plan = copyKeyPlan(
       combo,
-      entry.keepModKeys ? entry.shortcut.split(' + ').filter(key => isModKey(key)) : undefined
+      entry.keepModKeys ? entry.shortcut.split(' + ').filter(key => isModKey(key)) : [],
+      process.platform,
+      (key) => this.heldKeys?.isHeld(key) ?? false
     )
+    pressKeysToCopyItemText(plan.down, plan.up)
+    this.heldKeys?.keep(plan.keep)
 
     let clipboard: string
     try {
@@ -305,23 +341,19 @@ export function copyItemHotkey (game: GameId): string {
     : mergeTwoHotkeys('Ctrl + C', 'Ctrl')
 }
 
-function pressKeysToCopyItemText (combo: string, pressedModKeys: string[] = []) {
-  let keys = combo.split(' + ')
-  keys = keys.filter(key => key !== 'C')
-  if (process.platform !== 'darwin') {
-    // On non-Mac platforms, don't toggle keys that are already being pressed.
-    keys = keys.filter(key => !pressedModKeys.includes(key))
-  }
-
-  for (const key of keys) {
+/**
+ * 修飾鍵依 `copyKeyPlan`(held-copy-keys.ts)送:非 darwin 與 APT 相同(已按著的不送);
+ * darwin 一律送按下,使用者還按著的 hold 鍵不送放開(2026-11-18,見 held-copy-keys.ts)。
+ */
+function pressKeysToCopyItemText (down: readonly string[], up: readonly string[]) {
+  for (const key of down) {
     uIOhook.keyToggle(UiohookKey[key as UiohookKeyT], 'down')
   }
 
   // finally press `C` to copy text
   uIOhook.keyTap(UiohookKey.C)
 
-  keys.reverse()
-  for (const key of keys) {
+  for (const key of up) {
     uIOhook.keyToggle(UiohookKey[key as UiohookKeyT], 'up')
   }
 }

@@ -20,13 +20,8 @@ files:
     to: "."
 # MIT 要求著作權聲明**與授權全文**隨副本出貨;`copyright:` 只寫進 exe 的 VERSIONINFO,不算。
 # 放 extraFiles 而非 files:後者會塞進 app.asar,使用者打不開。
-extraFiles:
-  - from: "../LICENSE"
-    to: "LICENSE.txt"
-  - from: "../NOTICE.md"
-    to: "NOTICE.md"
-  - from: "../LICENSES"
-    to: "LICENSES"
+# 只放在 win 層:mac 的 extraFiles 會落在 .app/Contents/ 根(不是合法的 bundle 位置,codesign 拒簽),
+# mac 改用 extraResources(Contents/Resources/)。兩邊的清單要一致。
 extraMetadata:
   main: "main.js"
 # 只留 en-US / zh-TW / zh-CN 三個 Chromium 語系(省約 50 MB)。
@@ -37,6 +32,13 @@ nsis:
   artifactName: "${productName}-Setup-${version}.${ext}"
   allowToChangeInstallationDirectory: true
 win:
+  extraFiles:
+    - from: "../LICENSE"
+      to: "LICENSE.txt"
+    - from: "../NOTICE.md"
+      to: "NOTICE.md"
+    - from: "../LICENSES"
+      to: "LICENSES"
   # 安裝檔/exe 圖示;由 npm run build-icons 產生(renderer/public/brand/icon.svg)
   icon: "../renderer/public/icon.ico"
   target:
@@ -45,3 +47,25 @@ win:
 portable:
   # 預設檔名與 nsis 只差 "Setup",且含空白;改成固定格式。portable 不支援就地更新(AppUpdater → not-supported)
   artifactName: "${productName}-${version}-portable.${ext}"
+# macOS(實驗性,2026-11-18):只在 macOS 上打包(`npm run package:mac`)。
+# 簽章:鑰匙圈有 Developer ID Application 憑證就自動用它(hardened runtime;第一次會跳鑰匙圈授權視窗);
+# 沒有憑證時改 ad-hoc:`npx electron-builder build --mac -p never -c.mac.identity=- -c.mac.hardenedRuntime=false`(在 main/ 下)。
+# 簽章是逐檔 codesign --timestamp,log 只印一行 signing,每個架構要幾分鐘,不是卡住。
+# 尚未公證(notarize):別人下載後 Gatekeeper 會擋;ad-hoc 版要 `xattr -cr` 才能開,Squirrel.Mac 也不會自動更新。
+# OCR(WinRT)、自動切換遊戲(PowerShell)等 Windows 專屬功能在 Mac 上停用。
+mac:
+  icon: "../renderer/public/icon.png"
+  category: "public.app-category.utilities"
+  extraResources:
+    - from: "../LICENSE"
+      to: "LICENSE.txt"
+    - from: "../NOTICE.md"
+      to: "NOTICE.md"
+    - from: "../LICENSES"
+      to: "LICENSES"
+  target:
+    - target: "dmg"
+      arch: ["arm64", "x64"]
+    - target: "zip"
+      arch: ["arm64", "x64"]
+  artifactName: "${productName}-${version}-mac-${arch}.${ext}"

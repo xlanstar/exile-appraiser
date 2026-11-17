@@ -1065,6 +1065,8 @@ if (!skipStartup) app.whenReady().then(() => {
     // 2026-11-09:計時器熱鍵(遊戲本來就在前景,不搶焦點;overlay 閒置隱藏由 renderer 圖層回報喚醒)
     onTimer: (action) => { send('timer-action', action) }
   })
+  // macOS:結束前補送查價熱鍵留著沒送的修飾鍵放開(held-copy-keys.ts;其他平台不做事)
+  app.prependListener('will-quit', () => { shortcuts.releaseHeldKeys('結束程式') })
   // uiohook 掛鉤不在啟動時開:只在 WidgetAreaTracker 追蹤查價面板期間開(uiohook-gate.ts;送鍵不需要掛鉤)。
   // 例外(第 15 步):倉庫頁籤捲動開著時,遊戲在前景期間也持有一份(要收 wheel 事件);關著時維持上述行為。
   // 開關在第一次 host-config 才設(之前 enabled = false,不持有)。
@@ -1661,7 +1663,11 @@ if (!skipStartup) app.whenReady().then(() => {
       overlayInteractable: Boolean(overlay?.isInteractable)
     }),
     writeClipboard: (text) => clipboard.writeText(text),
-    tap: (key, mods) => { uIOhook.keyTap(UiohookKey[key], mods.map(m => UiohookKey[m])) },
+    tap: (key, mods) => {
+      // macOS:先補送查價熱鍵留著沒送的修飾鍵放開,否則 Ctrl+F / Enter 會多帶 Ctrl(held-copy-keys.ts;其他平台不做事)
+      shortcuts.releaseHeldKeys('正則貼上前')
+      uIOhook.keyTap(UiohookKey[key], mods.map(m => UiohookKey[m]))
+    },
     focusGame: () => { overlay?.assertGameActive() },
     gameFocused: () => Boolean(poeWindow?.targetHasFocus),
     quietCtrl: (on) => { stashScroll?.quietCtrl(on) },
